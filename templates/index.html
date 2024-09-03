@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Workout Planner</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/fullcalendar@5.10.2/main.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/fullcalendar@5.10.2/main.min.js"></script>
+</head>
+<body>
+    <div id="view-toggle">
+        <button onclick="toggleView('dayGridMonth')">Month</button>
+        <button onclick="toggleView('dayGridWeek')">Week</button>
+    </div>
+    <div id="calendar"></div>
+    <div id="forms-container">
+        <div id="rule-form" class="form">
+            <h2>Add/Edit Rule</h2>
+            <input type="hidden" id="rule-id">
+            <textarea id="natural-rule" placeholder="Enter your rule in natural language, e.g., 'Keep at least 2 days between running and swimming'"></textarea>
+            <button onclick="processNaturalRule()">Add Rule</button>
+            <h3>Or add rule manually:</h3>
+            <input type="text" id="rule-tag1" placeholder="Tag 1">
+            <input type="text" id="rule-tag2" placeholder="Tag 2">
+            <input type="number" id="rule-min-days" placeholder="Minimum Days">
+            <button onclick="saveRule()">Save Rule</button>
+            <button onclick="resetRuleForm()">Reset</button>
+        </div>
+    </div>
+    <div id="rules-list">
+        <h2>Current Rules</h2>
+        <ul id="rules-ul"></ul>
+    </div>
+
+    <!-- Event Modal -->
+    <div id="event-modal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h2 id="modal-title">Add/Edit Event</h2>
+            <input type="hidden" id="event-id">
+            <input type="text" id="event-title" placeholder="Event Title">
+            <input type="text" id="event-tags" placeholder="Tags (comma-separated)">
+            <input type="date" id="event-date">
+            <button onclick="saveEvent()">Save Event</button>
+            <button onclick="deleteEvent()" id="delete-event-btn" style="display: none;">Delete Event</button>
+        </div>
+    </div>
+
+    <script>
+        let calendar;
+        let currentEvent = null;
+
+        document.addEventListener('DOMContentLoaded', function() {
+            var calendarEl = document.getElementById('calendar');
+            calendar = new FullCalendar.Calendar(calendarEl, {
+                initialView: 'dayGridMonth',
+                headerToolbar: {
+                    left: 'prev,next today',
+                    center: 'title',
+                    right: 'dayGridMonth,dayGridWeek'
+                },
+                editable: true,
+                events: '/events',
+                dateClick: function(info) {
+                    openEventModal(null, info.date);
+                },
+                eventClick: function(info) {
+                    openEventModal(info.event);
+                },
+                eventDrop: function(info) {
+                    const eventData = {
+                        title: info.event.title,
+                        date: info.event.start.toISOString().split('T')[0],
+                        tags: info.event.extendedProps.tags
+                    };
+                    updateEvent(info.event.id, eventData, info);
+                }
+            });
+            calendar.render();
+            loadRules();
+        });
+
+        function toggleView(view) {
+            calendar.changeView(view);
+        }
+
+        function openEventModal(event, date) {
+            currentEvent = event;
+            const modal = document.getElementById('event-modal');
+            const modalTitle = document.getElementById('modal-title');
+            const eventId = document.getElementById('event-id');
+            const eventTitle = document.getElementById('event-title');
+            const eventTags = document.getElementById('event-tags');
+            const eventDate = document.getElementById('event-date');
+            const deleteBtn = document.getElementById('delete-event-btn');
+
+            if (event) {
+                modalTitle.textContent = 'Edit Event';
+                eventId.value = event.id;
+                eventTitle.value = event.title;
+                eventTags.value = event.extendedProps.tags.join(', ');
+                eventDate.value = event.startStr;
+                deleteBtn.style.display = 'inline-block';
+            } else {
+                modalTitle.textContent = 'Add Event';
+                eventId.value = '';
+                eventTitle.value = '';
+                eventTags.value = '';
+                eventDate.value = date.toISOString().split('T')[0];
+                deleteBtn.style.display = 'none';
+            }
+
+            modal.style.display = 'block';
+        }
+
+        // Close the modal when clicking on <span> (x)
+        document.getElementsByClassName('close')[0].onclick = function() {
+            document.getElementById('event-modal').style.display = 'none';
+        }
+
+        // Close the modal when clicking outside of it
+        window.onclick = function(event) {
+            var modal = document.getElementById('event-modal');
+            if (event.target == modal) {
+                modal.style.display = 'none';
+            }
+        }
+
+        function saveEvent() {
+            const id = document.getElementById('event-id').value;
+            const title = document.getElementById('event-title').value;
+            const tags = document.getElementById('event-tags').value.split(',').map(tag => tag.trim());
+            const date = document.getElementById('event-date').value;
+
+            const eventData = {
+                title: title,
+                date: date,
+                tags: tags
+            };
+
+            if (id) {
+                updateEvent(id, eventData);
+            } else {
+                addEvent(eventData);
+            }
+        }
+
+        function addEvent(eventData) {
+            fetch('/events', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(eventData)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    calendar.addEvent(data.event);
+                    document.getElementById('event-modal').style.display = 'none';
+                } else {
+                    alert(data.message);
+                }
+            });
+        }
+
+        function updateEvent(id, eventData, info) {
+            fetch(`/events/${id}`, {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(eventData)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    let event = calendar.getEventById(id);
+                    event.remove();
+                    calendar.addEvent(data.event);
+                    document.getElementById('event-modal').style.display = 'none';
+                } else {
+                    if (info) info.revert();
+                    alert(data.message);
+                }
+            });
+        }
+
+        function deleteEvent() {
+            const id = document.getElementById('event-id').value;
+            if (id && confirm('Are you sure you want to delete this event?')) {
+                fetch(`/events/${id}`, {
+                    method: 'DELETE'
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        let event = calendar.getEventById(id);
+                        event.remove();
+                        document.getElementById('event-modal').style.display = 'none';
+                    } else {
+                        alert(data.message);
+                    }
+                });
+            }
+        }
+
+        function loadRules() {
+            fetch('/rules')
+            .then(response => response.json())
+            .then(rules => {
+                const rulesList = document.getElementById('rules-ul');
+                rulesList.innerHTML = '';
+                rules.forEach(rule => {
+                    const li = document.createElement('li');
+                    li.textContent = `${rule.tag1} and ${rule.tag2}: ${rule.minDays} days apart`;
+                    const editButton = document.createElement('button');
+                    editButton.textContent = 'Edit';
+                    editButton.onclick = () => populateRuleForm(rule);
+                    const deleteButton = document.createElement('button');
+                    deleteButton.textContent = 'Delete';
+                    deleteButton.onclick = () => deleteRule(rule.id);
+                    li.appendChild(editButton);
+                    li.appendChild(deleteButton);
+                    rulesList.appendChild(li);
+                });
+            });
+        }
+
+        function populateRuleForm(rule) {
+            document.getElementById('rule-id').value = rule.id;
+            document.getElementById('rule-tag1').value = rule.tag1;
+            document.getElementById('rule-tag2').value = rule.tag2;
+            document.getElementById('rule-min-days').value = rule.minDays;
+        }
+
+        function resetRuleForm() {
+            document.getElementById('rule-id').value = '';
+            document.getElementById('rule-tag1').value = '';
+            document.getElementById('rule-tag2').value = '';
+            document.getElementById('rule-min-days').value = '';
+        }
+
+        function saveRule() {
+            const id = document.getElementById('rule-id').value;
+            const tag1 = document.getElementById('rule-tag1').value;
+            const tag2 = document.getElementById('rule-tag2').value;
+            const minDays = document.getElementById('rule-min-days').value;
+
+            const ruleData = {
+                tag1: tag1,
+                tag2: tag2,
+                minDays: parseInt(minDays)
+            };
+
+            if (id) {
+                updateRule(id, ruleData);
+            } else {
+                addRule(ruleData);
+            }
+        }
+
+        function addRule(ruleData) {
+            fetch('/rules', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(ruleData)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    loadRules();
+                    resetRuleForm();
+                } else {
+                    alert(data.message);
+                }
+            });
+        }
+
+        function updateRule(id, ruleData) {
+            fetch(`/rules/${id}`, {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(ruleData)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    loadRules();
+                    resetRuleForm();
+                } else {
+                    alert(data.message);
+                }
+            });
+        }
+
+        function deleteRule(id) {
+            if (confirm('Are you sure you want to delete this rule?')) {
+                fetch(`/rules/${id}`, {
+                    method: 'DELETE'
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        loadRules();
+                        resetRuleForm();
+                    } else {
+                        alert(data.message);
+                    }
+                });
+            }
+        }
+
+        function processNaturalRule() {
+            const naturalRule = document.getElementById('natural-rule').value;
+            
+            fetch('/process_rule', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({rule: naturalRule})
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    loadRules();
+                    document.getElementById('natural-rule').value = '';
+                    alert('Rule added successfully');
+                } else {
+                    alert(data.message || 'Failed to add rule');
+                }
+            });
+        }
+    </script>
+</body>
+</html>
